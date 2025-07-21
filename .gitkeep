@@ -1,3 +1,4 @@
 touch data/raw/.gitkeep
 touch data/transcripts/.gitkeep
 touch data/labels/.gitkeep
+touch outputs/.gitkeep

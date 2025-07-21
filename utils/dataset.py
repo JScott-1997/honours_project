@@ -1,28 +1,31 @@
 import torch
 from torch.utils.data import Dataset
-from transformers import DistilBertTokenizer
+from transformers import AutoTokenizer
 
 class DAICTextDataset(Dataset):
-    def __init__(self, dataframe, max_len=128):
-        self.texts = dataframe["transcript"]
-        self.labels = dataframe["phq8_score"]
-        self.tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
-        self.max_len = max_len
+    def __init__(self, dataframe, tokenizer=None, max_length=512):
+        self.texts = dataframe["transcript_text"].tolist()
+        self.labels = dataframe["phq8_score"].tolist()
+        self.tokenizer = tokenizer or AutoTokenizer.from_pretrained("distilbert-base-uncased")
+        self.max_length = max_length
 
     def __len__(self):
-        return len(self.labels)
+        return len(self.texts)
 
     def __getitem__(self, idx):
+        text = self.texts[idx]
+        label = self.labels[idx]
+
         encoding = self.tokenizer(
-            self.texts.iloc[idx],
+            text,
             padding="max_length",
             truncation=True,
-            max_length=self.max_len,
+            max_length=self.max_length,
             return_tensors="pt"
         )
 
         return {
-            "input_ids": encoding["input_ids"].squeeze(),
-            "attention_mask": encoding["attention_mask"].squeeze(),
-            "label": torch.tensor(self.labels.iloc[idx], dtype=torch.float)
+            "input_ids": encoding["input_ids"].squeeze(0),
+            "attention_mask": encoding["attention_mask"].squeeze(0),
+            "label": torch.tensor(label, dtype=torch.float)
         }

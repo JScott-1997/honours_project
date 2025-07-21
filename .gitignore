@@ -25,3 +25,6 @@ data/labels/*
 # Ignore OS-specific junk
 .DS_Store
 Thumbs.db
+
+# Ignore all contents of the outputs directory
+outputs/*

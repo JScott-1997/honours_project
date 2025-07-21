@@ -1,55 +1,112 @@
-# scripts/train_text_regression.py
+# scripts/train_distilbert_regression.py
 
 import pandas as pd
+import numpy as np
 import torch
-from torch.utils.data import DataLoader
-from torch import nn
-from transformers import AdamW
-from models.distilbert_regressor import DistilBERTRegressor
-from utils.dataset import DAICTextDataset
+from datasets import Dataset
+from transformers import (
+    DistilBertTokenizerFast,
+    DistilBertForSequenceClassification,
+    Trainer,
+    TrainingArguments,
+)
+from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
-from tqdm import tqdm
 
-# Config
+# -------------
+# Configuration
+# -------------
+MODEL_NAME = "distilbert-base-uncased"
+DATA_PATH = "data/transcripts/transcripts_with_labels.csv"
 BATCH_SIZE = 8
-EPOCHS = 5
-LR = 2e-5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EPOCHS = 4
+LEARNING_RATE = 2e-5
+OUTPUT_DIR = "outputs/distilbert_regression"
+SEED = 42
 
-# Load data
-df = pd.read_csv("data/transcripts.csv")  # Columns: transcript, phq8_score
-train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
+# -------------
+# Load Dataset
+# -------------
+df = pd.read_csv(DATA_PATH)
+df = df[["transcript_text", "phq8_score"]].dropna()
+df["phq8_score"] = df["phq8_score"].astype(float)
 
-train_dataset = DAICTextDataset(train_df)
-val_dataset = DAICTextDataset(val_df)
+train_df, val_df = train_test_split(df, test_size=0.2, random_state=SEED)
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE)
+# Hugging Face format
+train_dataset = Dataset.from_pandas(train_df.reset_index(drop=True))
+val_dataset = Dataset.from_pandas(val_df.reset_index(drop=True))
 
-# Model
-model = DistilBERTRegressor().to(DEVICE)
-optimizer = AdamW(model.parameters(), lr=LR)
-loss_fn = nn.MSELoss()
+# ------------------
+# Tokenization
+# ------------------
+tokenizer = DistilBertTokenizerFast.from_pretrained(MODEL_NAME)
 
-# Training loop
-for epoch in range(EPOCHS):
-    model.train()
-    total_loss = 0
+def tokenize(example):
+    return tokenizer(example["transcript_text"], padding="max_length", truncation=True, max_length=512)
 
-    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-        input_ids = batch["input_ids"].to(DEVICE)
-        attention_mask = batch["attention_mask"].to(DEVICE)
-        labels = batch["label"].to(DEVICE)
+train_dataset = train_dataset.map(tokenize, batched=True)
+val_dataset = val_dataset.map(tokenize, batched=True)
 
-        optimizer.zero_grad()
-        outputs = model(input_ids, attention_mask)
-        loss = loss_fn(outputs, labels)
-        loss.backward()
-        optimizer.step()
+# Hugging Face expects a "labels" column
+train_dataset = train_dataset.rename_column("phq8_score", "labels")
+val_dataset = val_dataset.rename_column("phq8_score", "labels")
 
-        total_loss += loss.item()
+train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+val_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    avg_loss = total_loss / len(train_loader)
-    print(f"Epoch {epoch+1} Training Loss: {avg_loss:.4f}")
+# ---------------------
+# Model (Regression)
+# ---------------------
+model = DistilBertForSequenceClassification.from_pretrained(
+    MODEL_NAME,
+    num_labels=1,
+    problem_type="regression"
+)
 
-torch.save(model.state_dict(), "outputs/checkpoints/distilbert_regressor.pt")
+# ---------------------
+# Metrics
+# ---------------------
+def compute_metrics(eval_pred):
+    predictions, labels = eval_pred
+    preds = np.squeeze(predictions)
+    mse = mean_squared_error(labels, preds)
+    return {"mse": mse}
+
+# ---------------------
+# TrainingArguments
+# ---------------------
+training_args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    per_device_train_batch_size=BATCH_SIZE,
+    per_device_eval_batch_size=BATCH_SIZE,
+    learning_rate=LEARNING_RATE,
+    num_train_epochs=EPOCHS,
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="mse",
+    greater_is_better=False,
+    seed=SEED,
+    report_to="none"
+)
+
+# ---------------------
+# Trainer
+# ---------------------
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset,
+    tokenizer=tokenizer,
+    compute_metrics=compute_metrics,
+)
+
+trainer.train()
+
+# ---------------------
+# Save final model
+# ---------------------
+trainer.save_model(f"{OUTPUT_DIR}/final_model")
+print(f"✅ Model saved to: {OUTPUT_DIR}/final_model")
