@@ -1,0 +1,27 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore virtual environments
+.venv/
+env/
+
+# Ignore all model weights and outputs
+outputs/checkpoints/*
+outputs/logs/*
+
+# Ignore raw data (DAIC-WOZ zips, etc.)
+data/raw/*
+!data/raw/.gitkeep
+
+# Ignore processed transcripts
+data/transcripts/*
+!data/transcripts/.gitkeep
+
+# Ignore labels (if stored separately)
+data/labels/*
+!data/labels/.gitkeep
+
+# Ignore OS-specific junk
+.DS_Store
+Thumbs.db
